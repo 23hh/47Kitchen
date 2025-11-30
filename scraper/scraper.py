@@ -1,0 +1,407 @@
+import os
+import time
+import csv
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+from dotenv import load_dotenv
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+
+from pymongo import MongoClient
+
+# 環境変数を読み込む
+load_dotenv()
+
+# ========================
+# 設定
+# ========================
+BASE_URL = "https://www.maff.go.jp"
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+}
+
+CATEGORY_LIST_PAGES = [
+    "/j/keikaku/syokubunka/k_ryouri/search_menu/type/rice.html",
+    "/j/keikaku/syokubunka/k_ryouri/search_menu/type/noodles.html",
+    "/j/keikaku/syokubunka/k_ryouri/search_menu/type/soup.html",
+    "/j/keikaku/syokubunka/k_ryouri/search_menu/type/meat_vegetable.html",
+    "/j/keikaku/syokubunka/k_ryouri/search_menu/type/fish.html",
+]
+CATEGORY_LIST_PAGES = [urljoin(BASE_URL, u) for u in CATEGORY_LIST_PAGES]
+
+# ========================
+# MongoDB設定
+# ========================
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://username:password@cluster0.xxxxx.mongodb.net/")
+DB_NAME = os.getenv("DB_NAME", "recipe")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "recipes")
+
+
+# ========================
+# ユーティリティ関数
+# ========================
+def get_soup(url: str) -> BeautifulSoup:
+    """requestsでHTMLを取得してBeautifulSoupオブジェクトを返す"""
+    print(f"[GET] {url}")
+    res = requests.get(url, headers=HEADERS, timeout=15)
+    res.encoding = res.apparent_encoding
+    res.raise_for_status()
+    return BeautifulSoup(res.text, "html.parser")
+
+
+def parse_ingredients(soup: BeautifulSoup):
+    """
+    詳細ページから材料 + 分量をパース
+    構造例:
+    <ul class="menu_material clm2 mt10">
+      <li>
+        <ul class="list">
+          <li>米</li>
+          <li>450g（3合）</li>
+        </ul>
+      </li>
+      ...
+    """
+    result = []
+    ul = soup.select_one("ul.menu_material")
+    if not ul:
+        return result
+
+    # 各材料ブロック(li)
+    for outer in ul.find_all("li", recursive=False):
+        inner = outer.find("ul", class_="list")
+        if not inner:
+            continue
+        lis = inner.find_all("li")
+        if len(lis) >= 2:
+            name = lis[0].get_text(strip=True)
+            amount = lis[1].get_text(strip=True)
+            if name or amount:
+                result.append({"name": name, "amount": amount})
+    return result
+
+
+def parse_cooking_method(soup: BeautifulSoup) -> str:
+    """
+    作り方セクションをパース
+    構造例:
+    <h2 class="tit05 mt50">作り方</h2>
+    <ul class="recipe mt10">
+      <li>
+        <div class="num">1</div>
+        <div class="txt">活きの良いサワラを3枚におろし、中骨にそって包丁を入れ節にとる。</div>
+      </li>
+      <li>
+        <div class="num">2</div>
+        <div class="txt">刺身に切って刺身の3％の塩をあて20分位おいた後、さっと洗い水気を取り、酢に1時間くらいつける。身の中まで白くなるほど酢でしめること。</div>
+      </li>
+      ...
+    </ul>
+    """
+    # "作り方"タイトルを探す
+    h2 = soup.find("h2", class_="tit05", string=lambda text: text and "作り方" in text)
+    if not h2:
+        # 他の形式も試行: h2内に"作り方"テキストが含まれている場合
+        for h in soup.find_all("h2", class_="tit05"):
+            if h.get_text(strip=True) and "作り方" in h.get_text():
+                h2 = h
+                break
+    
+    if not h2:
+        return ""
+    
+    # 次の兄弟要素からul.recipeを探す
+    recipe_ul = None
+    for sibling in h2.find_next_siblings():
+        if sibling.name == "ul" and "recipe" in sibling.get("class", []):
+            recipe_ul = sibling
+            break
+        # 他のh2やタイトルが出たら中断
+        if sibling.name in ["h2", "h3", "h4"]:
+            break
+    
+    if not recipe_ul:
+        return ""
+    
+    # 各ステップ(li)からテキストを抽出
+    steps = []
+    for li in recipe_ul.find_all("li", recursive=False):
+        # numとtxt divを探す
+        txt_div = li.find("div", class_="txt")
+        if txt_div:
+            step_text = txt_div.get_text(strip=True)
+            if step_text:
+                steps.append(step_text)
+    
+    # ステップごとに番号を付けて返す
+    if steps:
+        return "\n".join([f"{i+1}. {step}" for i, step in enumerate(steps)])
+    
+    return ""
+
+
+def ingredients_to_string(ing_list):
+    """
+    DBに保存されたingredientsリストを
+    CSV/Excel用文字列に変換
+    例: 米：450g（3合）\n水：630ml ...
+    """
+    if not ing_list:
+        return ""
+    lines = []
+    for item in ing_list:
+        name = (item.get("name") or "").strip()
+        amount = (item.get("amount") or "").strip()
+        if name and amount:
+            lines.append(f"{name}：{amount}")
+        elif name:
+            lines.append(name)
+    return "\n".join(lines)
+
+
+def get_section_clean(soup: BeautifulSoup, keyword: str) -> str:
+    """
+    '主な使用食材', '飲食方法'のようなセクションからテキストを抽出。
+    歴史/由来/時季/保存など他の説明が混ざって入ってくるのを
+    一部切り取るための簡単なフィルターも含む。
+    """
+    header = None
+
+    # まずh3から探す
+    for h in soup.find_all("h3"):
+        if keyword in h.get_text():
+            header = h
+            break
+
+    # なければh4でも試行
+    if not header:
+        for h in soup.find_all("h4"):
+            if keyword in h.get_text():
+                header = h
+                break
+
+    if not header:
+        return ""
+
+    texts = []
+
+    # 構造が<li><h3>タイトル</h3> ... </li>の場合が多いので、まずparent li基準で取得
+    li = header.find_parent("li")
+    if li:
+        # 該当li内でp / ul / olのみテキストとして使用
+        for t in li.find_all(["p", "ul", "ol"], recursive=False):
+            texts.append(t.get_text(" ", strip=True))
+    else:
+        # もしかしたらliでない場合は次の兄弟要素からp / ul / olを収集
+        for sib in header.find_next_siblings():
+            if sib.name in ["h3", "h4"]:
+                break
+            if sib.name in ["p", "ul", "ol"]:
+                texts.append(sib.get_text(" ", strip=True))
+
+    text = "\n".join(texts).strip()
+
+    # 不要な長い説明を切り取る（簡単な防御）
+    for cut in ["歴史", "由来", "時季", "関連", "保存", "継承", "取組"]:
+        idx = text.find(cut)
+        if idx != -1:
+            text = text[:idx].strip()
+
+    return text
+
+
+def collect_top5_from_category(cat_url: str, refresh_max: int = 20):
+    """
+    カテゴリーページでランダムに表示されるレシピを何度もリフレッシュして
+    最大5個まで詳細ページURLを収集
+    """
+    print(f"\n🔹 カテゴリーリスト収集: {cat_url}")
+
+    options = Options()
+    options.add_argument("--headless=new")
+    driver = webdriver.Chrome(options=options)
+
+    urls = set()
+    no_new = 0
+
+    try:
+        for i in range(refresh_max):
+            driver.get(cat_url)
+            time.sleep(2)
+
+            sections = driver.find_elements(By.CSS_SELECTOR, "div[id^='SearchMenu']")
+            if not sections:
+                print("  [WARN] SearchMenuセクションが見つかりません")
+                break
+
+            sec_id = sections[0].get_attribute("id")
+
+            cards = driver.find_elements(
+                By.CSS_SELECTOR, f"div#{sec_id} div.list p.tit a[href]"
+            )
+
+            before = len(urls)
+            for c in cards:
+                href = c.get_attribute("href")
+                if href:
+                    urls.add(href)
+
+            added = len(urls) - before
+            print(f"  ↺ {i+1}回リフレッシュ: +{added}個（累計 {len(urls)}個）")
+
+            if added == 0:
+                no_new += 1
+            else:
+                no_new = 0
+
+            if no_new >= 3:
+                print("  ✅ 新しいURLがもうないため終了")
+                break
+
+            if len(urls) >= 5:
+                print("  ✅ 5個以上収集完了")
+                break
+
+    finally:
+        driver.quit()
+
+    urls = list(urls)[:5]
+    print(f"  ➤ 最終選択されたURL {len(urls)}個")
+    return urls
+
+
+def scrape_detail_page(url: str) -> dict:
+    """
+    詳細ページから必要なデータを抽出:
+    - title (料理名)
+    - main_image (代表画像URL)
+    - main_ingredients (主な使用食材セクションテキスト)
+    - eating_method (飲食方法セクションテキスト)
+    - cooking_method (作り方セクションテキスト) - 新規追加
+    - ingredients (材料 + 分量リスト)
+    - detailUrl (ページURL)
+    """
+    print(f"[GET 詳細] {url}")
+    soup = get_soup(url)
+
+    # タイトル
+    title_span = soup.select_one("span.name")
+    title = title_span.get_text(strip=True) if title_span else ""
+
+    # メイン画像
+    img_tag = soup.select_one("div.menu_main img.resp_img")
+    if img_tag and img_tag.get("src"):
+        main_image = urljoin(url, img_tag["src"])
+    else:
+        main_image = ""
+
+    # 主な使用食材 / 飲食方法
+    main_ingredients = get_section_clean(soup, "主な使用食材")
+    eating_method = get_section_clean(soup, "飲食方法")
+
+    # 作り方
+    cooking_method = parse_cooking_method(soup)
+
+    # 材料 + 分量
+    ingredients = parse_ingredients(soup)
+
+    return {
+        "title": title,
+        "main_image": main_image,
+        "main_ingredients": main_ingredients,
+        "eating_method": eating_method,
+        "cooking_method": cooking_method,  # 新規追加
+        "ingredients": ingredients,  # DBに配列として保存
+        "detailUrl": url,
+    }
+
+
+# ========================
+# DB保存
+# ========================
+def save_to_mongo(rows):
+    """
+    MongoDBにupsertで保存
+    - key: detailUrl
+    - 重複の場合はscrapeCount増加 + データ更新
+    """
+    if not rows:
+        return
+
+    client = MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    col = db[COLLECTION_NAME]
+
+    count = 0
+    for doc in rows:
+        col.update_one(
+            {"detailUrl": doc["detailUrl"]},
+            {
+                "$set": doc,
+                "$inc": {"scrapeCount": 1},
+                "$setOnInsert": {"createdAt": time.time()},
+            },
+            upsert=True,
+        )
+        count += 1
+
+    client.close()
+    print(f"💾 MongoDB保存/更新完了: {count}件")
+
+
+# ========================
+# メイン実行
+# ========================
+def main():
+    all_rows = []
+
+    for cat_url in CATEGORY_LIST_PAGES:
+        category_name = cat_url.split("/")[-1].replace(".html", "")  # rice, soupなど
+        links = collect_top5_from_category(cat_url, refresh_max=20)
+
+        for link in links:
+            data = scrape_detail_page(link)
+            data["category"] = category_name
+            all_rows.append(data)
+            time.sleep(1)
+
+    # DB保存
+    print(f"\n🔥 合計 {len(all_rows)}件をDBにupsert")
+    save_to_mongo(all_rows)
+
+    # CSVバックアップ生成
+    file = "maff_recipe_top5_each_category.csv"
+    keys = [
+        "title",
+        "main_image",
+        "main_ingredients",
+        "eating_method",
+        "cooking_method",  # 新規追加
+        "ingredients",   # 材料+分量を文字列に変換して入れる
+        "detailUrl",
+        "category",
+    ]
+
+    with open(file, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=keys)
+        writer.writeheader()
+        for row in all_rows:
+            out = {k: row.get(k, "") for k in keys}
+            # ingredientsはリスト → 文字列に変換
+            out["ingredients"] = ingredients_to_string(row.get("ingredients", []))
+            writer.writerow(out)
+
+    print(f"\n✅ スクレイピング + DB保存 + CSVバックアップ完了! ({len(all_rows)}件)")
+    print(f"   → CSVファイル: {file}")
+
+
+if __name__ == "__main__":
+    main()
