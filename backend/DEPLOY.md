@@ -18,12 +18,20 @@ heroku login
 
 ### 2. Herokuアプリ作成
 
+ルートディレクトリまたは`backend`ディレクトリから実行できます。
+
 ```bash
+# ルートディレクトリから実行（推奨）
+heroku create your-app-name
+
+# または backendディレクトリから実行
 cd backend
 heroku create your-app-name
 ```
 
 > 💡 `your-app-name`を希望するアプリ名に変更してください。名前が既に使用されている場合は別の名前を使用する必要があります。
+> 
+> ✅ **注意**: ルートディレクトリに`Procfile`が作成されているため、ルートディレクトリからもデプロイ可能です。`Procfile`が`backend`ディレクトリに移動して依存関係をインストールし、サーバーを起動します。
 
 ### 3. Node.jsビルドパック設定
 
@@ -49,7 +57,10 @@ heroku config:set ALLOWED_ORIGINS="https://47-kitchen.vercel.app,http://localhos
 
 ### 5. Gitリポジトリ初期化とコミット（まだ行っていない場合）
 
+ルートディレクトリから実行してください（`Procfile`がルートにあります）。
+
 ```bash
+# ルートディレクトリで実行
 git init
 git add .
 git commit -m "Initial commit"
@@ -58,12 +69,14 @@ git commit -m "Initial commit"
 ### 6. Herokuリモートリポジトリ追加
 
 ```bash
+# ルートディレクトリから実行
 heroku git:remote -a your-app-name
 ```
 
 ### 7. デプロイ
 
 ```bash
+# ルートディレクトリからデプロイ
 git push heroku main
 ```
 
@@ -72,6 +85,8 @@ git push heroku main
 ```bash
 git push heroku master
 ```
+
+> ✅ **注意**: ルートディレクトリの`Procfile`が`backend`ディレクトリに移動して依存関係をインストールし、サーバーを起動するため、ルートディレクトリからデプロイできます。
 
 ### 8. アプリ確認
 
@@ -146,6 +161,17 @@ VITE_API_BASE_URL=https://your-app-name.herokuapp.com
 ```
 
 ## トラブルシューティング
+
+### "No default language could be detected" エラー
+
+このエラーは、ルートディレクトリに`Procfile`がない場合に発生します。
+
+**解決方法:**
+1. ルートディレクトリに`Procfile`が存在することを確認
+2. `Procfile`の内容が正しいことを確認: `web: cd backend && npm install && npm run start:prod`
+3. ルートディレクトリから`git push heroku main`を実行
+
+> 💡 ルートディレクトリの`Procfile`が`backend`ディレクトリに移動して依存関係をインストールし、サーバーを起動します。
 
 ### ビルド失敗
 
