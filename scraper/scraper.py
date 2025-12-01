@@ -259,16 +259,54 @@ def collect_top5_from_category(cat_url: str, refresh_max: int = 20):
     chrome_binary = os.getenv("GOOGLE_CHROME_BIN")
     chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
     
+    # Heroku buildpackがインストールしたChromeのデフォルトパス
+    if not chrome_binary:
+        # Heroku buildpackのデフォルトパスを試行
+        default_chrome_paths = [
+            "/app/.chromedriver/bin/google-chrome",
+            "/usr/bin/google-chrome",
+        ]
+        for path in default_chrome_paths:
+            if os.path.exists(path):
+                chrome_binary = path
+                break
+    
     if chrome_binary:
         options.binary_location = chrome_binary
+        print(f"  🔧 Chrome binary: {chrome_binary}")
     
     # Heroku環境でのChromeDriver Service設定
-    if chromedriver_path:
+    # 環境変数がない場合、Heroku buildpackのデフォルトパスを試行
+    if not chromedriver_path:
+        default_chromedriver_paths = [
+            "/app/.chromedriver/bin/chromedriver",
+            "/usr/local/bin/chromedriver",
+            "/app/vendor/chromedriver/bin/chromedriver",
+        ]
+        for path in default_chromedriver_paths:
+            if os.path.exists(path):
+                chromedriver_path = path
+                print(f"  🔍 Found ChromeDriver at: {chromedriver_path}")
+                break
+    
+    if chromedriver_path and os.path.exists(chromedriver_path):
         service = Service(chromedriver_path)
-        driver = webdriver.Chrome(service=service, options=options)
+        print(f"  🔧 Using ChromeDriver: {chromedriver_path}")
+        try:
+            driver = webdriver.Chrome(service=service, options=options)
+        except Exception as e:
+            print(f"  ❌ Failed to start Chrome with Service: {e}")
+            print("  ⚠️  Falling back to default ChromeDriver")
+            driver = webdriver.Chrome(options=options)
     else:
         # ローカル環境ではデフォルトのChromeDriverを使用
-        driver = webdriver.Chrome(options=options)
+        print("  ⚠️  ChromeDriver path not found, using default")
+        print("  💡 Make sure Chrome buildpacks are added to Heroku")
+        try:
+            driver = webdriver.Chrome(options=options)
+        except Exception as e:
+            print(f"  ❌ Failed to start Chrome: {e}")
+            raise
 
     urls = set()
     no_new = 0
