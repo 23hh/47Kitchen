@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 
 from pymongo import MongoClient
 
@@ -227,7 +228,47 @@ def collect_top5_from_category(cat_url: str, refresh_max: int = 20):
 
     options = Options()
     options.add_argument("--headless=new")
-    driver = webdriver.Chrome(options=options)
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-background-timer-throttling")
+    options.add_argument("--disable-backgrounding-occluded-windows")
+    options.add_argument("--disable-breakpad")
+    options.add_argument("--disable-client-side-phishing-detection")
+    options.add_argument("--disable-default-apps")
+    options.add_argument("--disable-features=TranslateUI")
+    options.add_argument("--disable-hang-monitor")
+    options.add_argument("--disable-ipc-flooding-protection")
+    options.add_argument("--disable-popup-blocking")
+    options.add_argument("--disable-prompt-on-repost")
+    options.add_argument("--disable-renderer-backgrounding")
+    options.add_argument("--disable-sync")
+    options.add_argument("--disable-translate")
+    options.add_argument("--metrics-recording-only")
+    options.add_argument("--no-first-run")
+    options.add_argument("--safebrowsing-disable-auto-update")
+    options.add_argument("--enable-automation")
+    options.add_argument("--password-store=basic")
+    options.add_argument("--use-mock-keychain")
+    options.add_argument("--window-size=1920,1080")
+    
+    # Heroku環境でのChromeDriverパス設定
+    chrome_binary = os.getenv("GOOGLE_CHROME_BIN")
+    chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+    
+    if chrome_binary:
+        options.binary_location = chrome_binary
+    
+    # Heroku環境でのChromeDriver Service設定
+    if chromedriver_path:
+        service = Service(chromedriver_path)
+        driver = webdriver.Chrome(service=service, options=options)
+    else:
+        # ローカル環境ではデフォルトのChromeDriverを使用
+        driver = webdriver.Chrome(options=options)
 
     urls = set()
     no_new = 0
