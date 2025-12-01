@@ -42,7 +42,13 @@ CATEGORY_LIST_PAGES = [urljoin(BASE_URL, u) for u in CATEGORY_LIST_PAGES]
 # ========================
 # MongoDB設定
 # ========================
-MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://username:password@cluster0.xxxxx.mongodb.net/")
+# MONGODB_URIを優先、なければMONGO_URIを試行（後方互換性のため）
+MONGO_URI = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI")
+if not MONGO_URI:
+    raise ValueError(
+        "MONGODB_URI環境変数が設定されていません。"
+        "Heroku環境変数または.envファイルでMONGODB_URIを設定してください。"
+    )
 DB_NAME = os.getenv("DB_NAME", "recipe")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "recipes")
 
@@ -265,7 +271,8 @@ def collect_top5_from_category(cat_url: str, refresh_max: int = 20):
     # chrome-for-testing buildpackのパスを優先
     if not chrome_binary:
         default_chrome_paths = [
-            "/app/.chrome-for-testing/chrome/linux-*/chrome-linux64/chrome",  # chrome-for-testing
+            "/app/.chrome-for-testing/chrome-linux64/chrome",  # chrome-for-testing (直接パス)
+            "/app/.chrome-for-testing/chrome/linux-*/chrome-linux64/chrome",  # chrome-for-testing (glob)
             "/app/.chromedriver/bin/google-chrome",  # 旧buildpack
             "/usr/bin/google-chrome",
         ]
@@ -288,7 +295,8 @@ def collect_top5_from_category(cat_url: str, refresh_max: int = 20):
     # chrome-for-testing buildpackのパスを優先
     if not chromedriver_path:
         default_chromedriver_paths = [
-            "/app/.chrome-for-testing/chromedriver/linux-*/chromedriver-linux64/chromedriver",  # chrome-for-testing
+            "/app/.chrome-for-testing/chromedriver-linux64/chromedriver",  # chrome-for-testing (直接パス)
+            "/app/.chrome-for-testing/chromedriver/linux-*/chromedriver-linux64/chromedriver",  # chrome-for-testing (glob)
             "/app/.chromedriver/bin/chromedriver",  # 旧buildpack
             "/usr/local/bin/chromedriver",
             "/app/vendor/chromedriver/bin/chromedriver",
@@ -432,7 +440,11 @@ def save_to_mongo(rows):
     if not rows:
         return
 
-    client = MongoClient(MONGO_URI)
+    client = MongoClient(
+        MONGO_URI,
+        serverSelectionTimeoutMS=30000,  # 30秒でタイムアウト
+        connectTimeoutMS=30000,
+    )
     db = client[DB_NAME]
     col = db[COLLECTION_NAME]
 
@@ -465,7 +477,11 @@ def check_existing_recipes(urls: list) -> set:
         return set()
     
     try:
-        client = MongoClient(MONGO_URI)
+        client = MongoClient(
+            MONGO_URI,
+            serverSelectionTimeoutMS=10000,  # 10秒でタイムアウト
+            connectTimeoutMS=10000,
+        )
         db = client[DB_NAME]
         col = db[COLLECTION_NAME]
         
