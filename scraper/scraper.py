@@ -1,6 +1,7 @@
 import os
 import time
 import csv
+import glob
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
@@ -256,19 +257,27 @@ def collect_top5_from_category(cat_url: str, refresh_max: int = 20):
     options.add_argument("--window-size=1920,1080")
     
     # Heroku環境でのChromeDriverパス設定
-    chrome_binary = os.getenv("GOOGLE_CHROME_BIN")
-    chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+    # heroku-buildpack-chrome-for-testingが設定する環境変数を優先
+    chrome_binary = os.getenv("GOOGLE_CHROME_BIN") or os.getenv("CHROME_BIN")
+    chromedriver_path = os.getenv("CHROMEDRIVER_PATH") or os.getenv("CHROMEDRIVER_BIN")
     
     # Heroku buildpackがインストールしたChromeのデフォルトパス
+    # chrome-for-testing buildpackのパスを優先
     if not chrome_binary:
-        # Heroku buildpackのデフォルトパスを試行
         default_chrome_paths = [
-            "/app/.chromedriver/bin/google-chrome",
+            "/app/.chrome-for-testing/chrome/linux-*/chrome-linux64/chrome",  # chrome-for-testing
+            "/app/.chromedriver/bin/google-chrome",  # 旧buildpack
             "/usr/bin/google-chrome",
         ]
-        for path in default_chrome_paths:
-            if os.path.exists(path):
-                chrome_binary = path
+        for path_pattern in default_chrome_paths:
+            if "*" in path_pattern:
+                # globパターンの場合
+                matches = glob.glob(path_pattern)
+                if matches:
+                    chrome_binary = matches[0]
+                    break
+            elif os.path.exists(path_pattern):
+                chrome_binary = path_pattern
                 break
     
     if chrome_binary:
@@ -276,16 +285,24 @@ def collect_top5_from_category(cat_url: str, refresh_max: int = 20):
         print(f"  🔧 Chrome binary: {chrome_binary}")
     
     # Heroku環境でのChromeDriver Service設定
-    # 環境変数がない場合、Heroku buildpackのデフォルトパスを試行
+    # chrome-for-testing buildpackのパスを優先
     if not chromedriver_path:
         default_chromedriver_paths = [
-            "/app/.chromedriver/bin/chromedriver",
+            "/app/.chrome-for-testing/chromedriver/linux-*/chromedriver-linux64/chromedriver",  # chrome-for-testing
+            "/app/.chromedriver/bin/chromedriver",  # 旧buildpack
             "/usr/local/bin/chromedriver",
             "/app/vendor/chromedriver/bin/chromedriver",
         ]
-        for path in default_chromedriver_paths:
-            if os.path.exists(path):
-                chromedriver_path = path
+        for path_pattern in default_chromedriver_paths:
+            if "*" in path_pattern:
+                # globパターンの場合
+                matches = glob.glob(path_pattern)
+                if matches:
+                    chromedriver_path = matches[0]
+                    print(f"  🔍 Found ChromeDriver at: {chromedriver_path}")
+                    break
+            elif os.path.exists(path_pattern):
+                chromedriver_path = path_pattern
                 print(f"  🔍 Found ChromeDriver at: {chromedriver_path}")
                 break
     
