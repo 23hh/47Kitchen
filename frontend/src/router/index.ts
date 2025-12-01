@@ -12,7 +12,7 @@ const routes = [
     name: 'Home',
     component: Home,
     meta: {
-      title: '日本全国郷土料理レシピ検索',
+      title: 'ホーム',
     },
   },
   {
@@ -43,9 +43,11 @@ const router = createRouter({
 
 /**
  * ルート変更時にページタイトルを更新
+ * 形式: "ページ名 - 47 Kitchen"
  */
 router.beforeEach((to, from, next) => {
-  document.title = to.meta.title as string || '日本全国郷土料理レシピ検索';
+  const pageTitle = to.meta.title as string || 'ホーム';
+  document.title = `${pageTitle} - 47 Kitchen`;
   next();
 });
 

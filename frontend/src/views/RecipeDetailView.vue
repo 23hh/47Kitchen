@@ -277,6 +277,11 @@ const fetchRecipeDetail = async () => {
 
     const data = await response.json();
     recipe.value = data;
+    
+    // レシピタイトルをページタイトルに反映
+    if (data.title) {
+      document.title = `${data.title} - 47 Kitchen`;
+    }
   } catch (err) {
     console.error('レシピ詳細の取得に失敗しました:', err);
     error.value = err instanceof Error ? err.message : 'レシピの読み込みに失敗しました';
