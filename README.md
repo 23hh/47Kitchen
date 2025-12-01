@@ -1,6 +1,7 @@
 # 日本全国郷土料理レシピ検索アプリ
 
 日本全国の郷土料理レシピを材料から検索できるWebアプリケーションです。
+
 https://47-kitchen-adv1omae3-23hs-projects.vercel.app/
 
 ## 🎯 プロジェクト概要
