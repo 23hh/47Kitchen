@@ -360,21 +360,105 @@ def save_to_mongo(rows):
 # ========================
 # メイン実行
 # ========================
+def check_existing_recipes(urls: list) -> set:
+    """
+    MongoDBに既に存在するレシピのURLを確認
+    返り値: 既存のURLのセット
+    """
+    if not urls:
+        return set()
+    
+    try:
+        client = MongoClient(MONGO_URI)
+        db = client[DB_NAME]
+        col = db[COLLECTION_NAME]
+        
+        existing = col.find(
+            {"detailUrl": {"$in": urls}},
+            {"detailUrl": 1}
+        )
+        existing_urls = {doc["detailUrl"] for doc in existing}
+        
+        client.close()
+        return existing_urls
+    except Exception as e:
+        print(f"⚠️  既存レシピ確認中にエラー: {e}")
+        return set()
+
+
 def main():
     all_rows = []
+    total_new_count = 0
+    total_existing_count = 0
+    no_new_data_categories = 0
+
+    print("=" * 60)
+    print("🚀 スクレイピング開始")
+    print("=" * 60)
 
     for cat_url in CATEGORY_LIST_PAGES:
         category_name = cat_url.split("/")[-1].replace(".html", "")  # rice, soupなど
+        print(f"\n📂 カテゴリー: {category_name}")
+        
+        # カテゴリーページからURLを収集
         links = collect_top5_from_category(cat_url, refresh_max=20)
+        
+        if not links:
+            print(f"  ⚠️  {category_name}カテゴリーからURLが見つかりませんでした")
+            no_new_data_categories += 1
+            continue
 
-        for link in links:
-            data = scrape_detail_page(link)
-            data["category"] = category_name
-            all_rows.append(data)
-            time.sleep(1)
+        # 既存のレシピを確認
+        existing_urls = check_existing_recipes(links)
+        new_links = [link for link in links if link not in existing_urls]
+        
+        print(f"  📊 収集URL: {len(links)}個")
+        print(f"  ✅ 新規URL: {len(new_links)}個")
+        print(f"  🔄 既存URL: {len(existing_urls)}個")
+
+        # 新しいデータがない場合
+        if not new_links:
+            print(f"  ⏸️  {category_name}カテゴリーには新しいデータがありません。スキップします。")
+            no_new_data_categories += 1
+            total_existing_count += len(existing_urls)
+            
+            # すべてのカテゴリーで新しいデータがない場合、早期終了
+            if no_new_data_categories >= len(CATEGORY_LIST_PAGES):
+                print("\n" + "=" * 60)
+                print("⏹️  すべてのカテゴリーで新しいデータがありません。")
+                print("   スクレイピングを終了します。")
+                print("=" * 60)
+                return
+            continue
+
+        # 新しいレシピをスクレイピング
+        category_new_count = 0
+        for link in new_links:
+            try:
+                data = scrape_detail_page(link)
+                data["category"] = category_name
+                all_rows.append(data)
+                category_new_count += 1
+                total_new_count += 1
+                time.sleep(1)
+            except Exception as e:
+                print(f"  ❌ エラー: {link} のスクレイピングに失敗: {e}")
+                continue
+
+        total_existing_count += len(existing_urls)
+        print(f"  ✅ {category_name}カテゴリー: 新規 {category_new_count}件を追加")
+
+    # 新しいデータがない場合
+    if not all_rows:
+        print("\n" + "=" * 60)
+        print("⏹️  新しいデータがありませんでした。")
+        print(f"   既存レシピ: {total_existing_count}件")
+        print("   スクレイピングを終了します。")
+        print("=" * 60)
+        return
 
     # DB保存
-    print(f"\n🔥 合計 {len(all_rows)}件をDBにupsert")
+    print(f"\n🔥 合計 {len(all_rows)}件の新規データをDBにupsert")
     save_to_mongo(all_rows)
 
     # CSVバックアップ生成
@@ -399,8 +483,11 @@ def main():
             out["ingredients"] = ingredients_to_string(row.get("ingredients", []))
             writer.writerow(out)
 
-    print(f"\n✅ スクレイピング + DB保存 + CSVバックアップ完了! ({len(all_rows)}件)")
+    print(f"\n✅ スクレイピング + DB保存 + CSVバックアップ完了!")
+    print(f"   → 新規データ: {len(all_rows)}件")
+    print(f"   → 既存データ: {total_existing_count}件")
     print(f"   → CSVファイル: {file}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
