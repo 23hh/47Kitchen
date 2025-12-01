@@ -13,7 +13,7 @@ HerokuにデプロイされたバックエンドAPIとフロントエンドを�
 
 | 変数名 | 値 | 環境 |
 |--------|-----|------|
-| `VITE_API_BASE_URL` | `https://young-hamlet-86995-87b3d8324d80.herokuapp.com` | Production, Preview, Development |
+| `VITE_API_BASE_URL` | `https://kitchen47-62cc8fa65dcf.herokuapp.com` | Production, Preview, Development |
 
 5. **Save** をクリック
 
@@ -36,7 +36,7 @@ git push origin main
 デプロイ後、以下のURLにアクセスして動作を確認:
 
 - フロントエンド: https://47-kitchen.vercel.app/
-- バックエンドAPI: https://young-hamlet-86995-87b3d8324d80.herokuapp.com/recipes
+- バックエンドAPI: https://kitchen47-62cc8fa65dcf.herokuapp.com/recipes
 
 ## トラブルシューティング
 
@@ -51,7 +51,7 @@ git push origin main
 
 1. バックエンドが正常に起動しているか確認:
    ```bash
-   curl https://young-hamlet-86995-87b3d8324d80.herokuapp.com/recipes
+   curl https://kitchen47-62cc8fa65dcf.herokuapp.com/recipes
    ```
 
 2. Vercelの環境変数が正しく設定されているか確認:
